@@ -301,38 +301,47 @@ class CodexAppController:
     def _resolve_app_executable(self) -> Path:
         """解析 Codex/ChatGPT 可执行文件的完整路径。
 
-        优先级：显式配置 > PATH 命令 > 快速路径 > 深度搜索（最慢）
+        优先级：缓存 > 显式配置 > PATH 命令 > 快速路径 > 深度搜索（最慢）
         """
+        # 0. 使用缓存的路径（避免重复搜索）
+        if self._resolved_executable and self._resolved_executable.is_file():
+            return self._resolved_executable
+
         # 1. 用户显式指定的路径
         explicit = Path(self.app_path).expanduser()
         if explicit.is_file() and os.access(explicit, os.X_OK):
-            return explicit.resolve()
+            self._resolved_executable = explicit.resolve()
+            return self._resolved_executable
         # CODEX_APP_PATH 可能给的是目录，里面包含 exe
         if explicit.is_dir():
             for name in ("Codex.exe", "ChatGPT.exe", "codex", "chatgpt"):
                 candidate = explicit / name
                 if candidate.is_file():
-                    return candidate.resolve()
+                    self._resolved_executable = candidate.resolve()
+                    return self._resolved_executable
 
         # 2. 查 PATH（针对 Codex CLI 或全局安装）
         for name in ("codex", "chatgpt", "Codex.exe", "ChatGPT.exe"):
             found = shutil.which(name)
             if found:
-                return Path(found).resolve()
+                self._resolved_executable = Path(found).resolve()
+                return self._resolved_executable
 
         # 3. Windows 快速路径（不递归）
         if sys_platform() == "win32":
             fast_candidates = self._windows_fast_paths()
             for path in fast_candidates:
                 if path.is_file():
-                    return path.resolve()
+                    self._resolved_executable = path.resolve()
+                    return self._resolved_executable
 
             # 4. 深度搜索（最慢，最后尝试）
             print("正在深度搜索 WindowsApps，这可能需要几秒钟...", flush=True)
             deep_candidates = self._windows_deep_search()
             for path in deep_candidates:
                 if path.is_file():
-                    return path.resolve()
+                    self._resolved_executable = path.resolve()
+                    return self._resolved_executable
 
             # 未找到，抛出清晰的错误
             all_tried = fast_candidates + deep_candidates
