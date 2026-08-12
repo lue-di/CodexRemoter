@@ -36,6 +36,7 @@ class AuthRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     auth_json: Optional[Union[Dict[str, Any], str]] = None
+    auto_restart: bool = False  # 是否自动重启应用（默认不重启，避免超时）
 
     def resolved_auth(self) -> Union[Dict[str, Any], str]:
         if self.auth_json is not None:
@@ -163,12 +164,8 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        result = await _call(controller.switch_auth(payload))
-        return {
-            "ok": True,
-            "message": "账号切换成功，应用已重启",
-            "result": result,
-        }
+        result = await _call(controller.switch_auth(payload, auto_restart=body.auto_restart))
+        return result
 
     return application
 

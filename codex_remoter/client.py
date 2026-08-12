@@ -419,19 +419,20 @@ class CodexAppController:
         return candidates
 
     def _quit_uninstrumented_windows_app(self) -> None:
-        """Windows：如果已有未带调试端口的 Codex/ChatGPT 进程，尝试正常关闭。"""
-        if self._targets():
-            return  # 已有带调试端口的实例，复用
+        """Windows：如果已有未带调试端口的 Codex/ChatGPT 进程，尝试正常关闭。
+
+        注意：不检查调试端口，直接尝试关闭进程，避免死锁。
+        """
         # 简单实现：用 taskkill 请求关闭同名进程
         for name in ("Codex.exe", "ChatGPT.exe"):
             try:
                 subprocess.run(
-                    ["taskkill", "/IM", name, "/T"],
+                    ["taskkill", "/IM", name, "/F"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    timeout=3,
+                    timeout=2,
                 )
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
                 pass
 
     def _macos_main_processes(self) -> List[tuple[int, str]]:
@@ -468,10 +469,11 @@ class CodexAppController:
                 except (OSError, ProcessLookupError):
                     pass
 
-    async def switch_auth(self, auth_json: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """切换账号：替换 Codex 的 auth.json 并重启应用。
+    async def switch_auth(self, auth_json: Union[str, Dict[str, Any]], auto_restart: bool = False) -> Dict[str, Any]:
+        """切换账号：替换 Codex 的 auth.json。
 
         ``auth_json`` 接受已解析的 JSON 对象，或 auth.json 的原始文本。
+        ``auto_restart`` 如果为 True，会尝试重启应用（可能超时）。
         """
         payload = self._serialize_auth(auth_json)
 
@@ -505,17 +507,33 @@ class CodexAppController:
             except OSError as exc:
                 raise CodexAppError(f"auth.json 写入失败: {exc}") from exc
 
-            # 重启应用以使新登录状态生效
-            await self.stop()
-            await asyncio.sleep(1.0)  # 等待应用完全关闭
-            await self.start()
-
-            return {
+            result = {
                 "ok": True,
-                "message": "账号切换成功，应用已重启",
+                "message": "账号已切换，auth.json 已更新",
                 "auth_file": str(auth_file),
                 "backup": str(backup_file) if backup_file else None,
+                "auto_restart": auto_restart,
             }
+
+            # 可选：重启应用（默认不重启，避免超时）
+            if auto_restart:
+                try:
+                    await self.stop()
+                    await asyncio.sleep(1.0)
+                    await asyncio.wait_for(self.start(), timeout=30.0)
+                    result["message"] = "账号已切换，应用已重启"
+                    result["restarted"] = True
+                except asyncio.TimeoutError:
+                    result["message"] = "账号已切换，但应用重启超时。请手动重启 Codex"
+                    result["restarted"] = False
+                except Exception as exc:
+                    result["message"] = f"账号已切换，但应用重启失败: {exc}"
+                    result["restarted"] = False
+            else:
+                result["message"] = "账号已切换。请手动重启 Codex 应用以生效"
+                result["restarted"] = None
+
+            return result
         finally:
             # 切换完成，设置事件并清除标志
             self._switching_auth = False
