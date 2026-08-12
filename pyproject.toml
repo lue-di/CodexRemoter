@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-remoter"
+version = "0.1.0"
+description = "Control the Codex desktop app through CDP and expose a REST API"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "uvicorn[standard]>=0.30,<1.0",
+  "websocket-client>=1.8,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27,<1.0",
+  "pytest>=8,<10",
+]
+
+[tool.setuptools.packages.find]
+include = ["codex_remoter*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,38 @@
+# Test your FastAPI endpoints
+
+GET http://127.0.0.1:8000/
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/health
+Accept: application/json
+
+###
+
+POST http://127.0.0.1:8000/v1/codex-app/start
+Content-Type: application/json
+
+{}
+
+###
+
+POST http://127.0.0.1:8000/v1/codex-app/messages
+Content-Type: application/json
+
+{
+  "message": "请用一句话介绍当前项目",
+  "new_chat": true,
+  "wait_for_reply": true
+}
+
+###
+
+POST http://127.0.0.1:8000/v1/codex-app/auth
+Content-Type: application/json
+
+{
+  "auth_json": "eyJ0b2tlbiI6ICJ5b3VyLWJhc2U2NC1lbmNvZGVkLWF1dGguanNvbiJ9"
+}
+
+###
