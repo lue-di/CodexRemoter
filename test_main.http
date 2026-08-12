@@ -23,16 +23,16 @@ Content-Type: application/json
 {
   "message": "请用一句话介绍当前项目",
   "new_chat": true,
-  "wait_for_reply": true
+  "wait_for_reply": false
 }
 
 ###
 
-POST http://127.0.0.1:8000/v1/codex-app/auth
+POST http://10.10.10.50:9987/v1/codex-app/auth
 Content-Type: application/json
 
 {
-  "auth_json": "eyJ0b2tlbiI6ICJ5b3VyLWJhc2U2NC1lbmNvZGVkLWF1dGguanNvbiJ9"
+  "auth_json": "{auth.json}"
 }
 
 ###

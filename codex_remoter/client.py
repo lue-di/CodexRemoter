@@ -653,21 +653,68 @@ class CodexAppController:
           const text = %s;
           if (%s) {
             const buttons = [...document.querySelectorAll('button')];
-            const newButton = buttons.find(b => b.innerText.trim() === 'New chat' || b.getAttribute('aria-label') === 'New chat');
-            if (newButton && document.querySelectorAll('[data-user-message-bubble="true"]').length) newButton.click();
-            await new Promise(resolve => setTimeout(resolve, 350));
+            const newButton = buttons.find(b => {
+              const label = b.getAttribute('aria-label') || b.innerText || '';
+              return /new chat|新对话/i.test(label);
+            });
+            if (newButton && document.querySelectorAll('[data-user-message-bubble="true"]').length) {
+              newButton.click();
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
           }
-          const box = document.querySelector('[data-codex-composer="true"]') || document.querySelector('[role="textbox"][contenteditable="true"]');
-          if (!box) return {ok:false,error:'找不到 Codex 消息输入框'};
+
+          // 尝试多种选择器查找输入框
+          let box = document.querySelector('[data-codex-composer="true"]');
+          if (!box) box = document.querySelector('[role="textbox"][contenteditable="true"]');
+          if (!box) box = document.querySelector('textarea[placeholder*="Message"]');
+          if (!box) box = document.querySelector('textarea[placeholder*="消息"]');
+          if (!box) box = document.querySelector('[contenteditable="true"][role="textbox"]');
+          if (!box) box = document.querySelector('div[contenteditable="true"]');
+          if (!box) {
+            // 最后尝试：查找所有可编辑元素
+            const editable = [...document.querySelectorAll('[contenteditable="true"]')];
+            box = editable.find(el => el.offsetParent !== null); // 找到可见的
+          }
+
+          if (!box) return {ok:false,error:'找不到 Codex 消息输入框。请确保 Codex 页面已完全加载。'};
+
           box.focus();
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          // 尝试多种方式插入文本
           let inserted = false;
-          try { inserted = document.execCommand('insertText', false, text); } catch (_) {}
-          if (!inserted) box.innerHTML = '<p dir="auto">' + text.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</p>';
+          try {
+            inserted = document.execCommand('insertText', false, text);
+          } catch (_) {}
+
+          if (!inserted) {
+            // 如果是 textarea
+            if (box.tagName === 'TEXTAREA') {
+              box.value = text;
+              box.dispatchEvent(new Event('input', {bubbles:true}));
+            } else {
+              // contenteditable div
+              box.innerHTML = '<p dir="auto">' + text.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</p>';
+            }
+          }
+
           box.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:text}));
           box.dispatchEvent(new Event('change', {bubbles:true}));
-          await new Promise(resolve => setTimeout(resolve, 150));
-          const send = document.querySelector('button[aria-label="Send"]');
-          if (!send || send.disabled) return {ok:false,error:'Codex 发送按钮不可用'};
+          await new Promise(resolve => setTimeout(resolve, 200));
+
+          // 查找发送按钮
+          let send = document.querySelector('button[aria-label="Send"]');
+          if (!send) send = document.querySelector('button[aria-label="发送"]');
+          if (!send) {
+            const buttons = [...document.querySelectorAll('button')];
+            send = buttons.find(b => {
+              const label = b.getAttribute('aria-label') || b.innerText || '';
+              return /send|发送/i.test(label);
+            });
+          }
+
+          if (!send || send.disabled) return {ok:false,error:'Codex 发送按钮不可用或禁用'};
+
           const assistantCount = document.querySelectorAll('[data-markdown-text-style="assistant-message"]').length;
           send.click();
           return {ok:true,assistant_count:assistantCount};
