@@ -40,6 +40,7 @@ class Settings:
             default_app_path = "/Applications/ChatGPT.app"
         elif sys.platform == "win32":
             localappdata = os.getenv("LOCALAPPDATA", "")
+            # D:\WindowsApps\OpenAI.Codex_26.803.10989.0_x64__2p2nqsd0c76g0\app
             default_app_path = os.path.join(localappdata, "Programs", "ChatGPT", "ChatGPT.exe") if localappdata else "ChatGPT.exe"
         else:
             default_app_path = "codex"
