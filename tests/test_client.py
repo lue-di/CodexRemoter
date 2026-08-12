@@ -105,3 +105,45 @@ async def test_stop_waits_until_old_debug_listener_is_gone():
     assert status["running"] is False
     assert controller.polls_after_terminate >= 3
     assert controller._launcher is None
+
+
+class InterruptedReplyController(CodexAppController):
+    def __init__(self, states) -> None:
+        super().__init__(debug_port=1, startup_timeout=0.2, poll_interval=0.001)
+        self.states = iter(states)
+
+    def _targets(self):
+        return [TARGET]
+
+    def _evaluate(self, target, expression):
+        if "has_new_reply" in expression:
+            return next(self.states)
+        if "assistant_count" in expression:
+            return {"ok": True, "assistant_count": 0}
+        return {"ok": True}
+
+
+@pytest.mark.anyio
+async def test_send_returns_when_generation_is_interrupted_without_reply():
+    controller = InterruptedReplyController([
+        {"generating": True, "has_new_reply": False, "reply": ""},
+        {"generating": False, "has_new_reply": False, "reply": ""},
+    ])
+
+    result = await controller.send_message("hello")
+
+    assert result.status == "interrupted"
+    assert result.reply == ""
+
+
+@pytest.mark.anyio
+async def test_send_returns_partial_reply_after_manual_stop():
+    controller = InterruptedReplyController([
+        {"generating": True, "has_new_reply": True, "reply": "partial"},
+        {"generating": False, "has_new_reply": True, "reply": "partial"},
+    ])
+
+    result = await controller.send_message("hello")
+
+    assert result.status == "completed"
+    assert result.reply == "partial"

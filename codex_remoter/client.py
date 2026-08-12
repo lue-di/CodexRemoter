@@ -41,6 +41,7 @@ class AppTurnResult:
     url: str
     target_id: str
     elapsed_ms: int
+    status: str = "completed"
 
 
 class CodexAppController:
@@ -266,17 +267,30 @@ class CodexAppController:
                 )
             deadline = time.monotonic() + timeout
             baseline = int(before.get("assistant_count", 0))
+            saw_generating = False
             while time.monotonic() < deadline:
                 state = await asyncio.to_thread(
                     self._evaluate, target, self._reply_script(message, baseline)
                 )
-                if state.get("done"):
+                generating = bool(state.get("generating"))
+                saw_generating = saw_generating or generating
+                has_new_reply = bool(state.get("has_new_reply"))
+                if has_new_reply and not generating:
                     return AppTurnResult(
                         message=message,
                         reply=state.get("reply", ""),
                         url=target.get("url", ""),
                         target_id=target.get("id", ""),
                         elapsed_ms=int((time.monotonic()-started)*1000),
+                    )
+                if saw_generating and not generating:
+                    return AppTurnResult(
+                        message=message,
+                        reply=state.get("reply", ""),
+                        url=target.get("url", ""),
+                        target_id=target.get("id", ""),
+                        elapsed_ms=int((time.monotonic()-started)*1000),
+                        status="interrupted",
                     )
                 await asyncio.sleep(self.poll_interval)
             raise CodexAppTimeoutError("等待 Codex App 回复超过 {:.0f} 秒".format(timeout))
@@ -786,17 +800,21 @@ class CodexAppController:
 
     @staticmethod
     def _reply_script(message: str, baseline: int) -> str:
-        message_json = json.dumps(message, ensure_ascii=False)
         return """(() => {
-          const expected = %s;
-          const users = [...document.querySelectorAll('[data-user-message-bubble="true"]')];
           const nodes = [...document.querySelectorAll('[data-markdown-text-style="assistant-message"]')];
           const reply = nodes.length ? (nodes[nodes.length - 1].innerText || '').trim() : '';
-          const stop = [...document.querySelectorAll('button')].some(b => /stop|停止/i.test(b.getAttribute('aria-label') || b.innerText || ''));
-          const lastUser = users.length ? (users[users.length - 1].innerText || '').trim() : '';
-          const sent = lastUser === expected;
-          return {done: sent && !!reply && !stop && nodes.length !== %d, reply};
-        })()""" % (message_json, baseline)
+          const generating = [...document.querySelectorAll('button')].some(b => {
+            const label = b.getAttribute('aria-label') || b.getAttribute('title') || b.innerText || '';
+            return /stop|cancel|停止|取消/i.test(label) && b.offsetParent !== null;
+          });
+          const hasNewReply = nodes.length > %d && !!reply;
+          return {
+            generating,
+            has_new_reply: hasNewReply,
+            assistant_count: nodes.length,
+            reply
+          };
+        })()""" % baseline
 
     @staticmethod
     def _free_port() -> int:

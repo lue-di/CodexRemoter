@@ -165,7 +165,9 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/codex-app/auth" `
 - 如果此时有其他请求正在发送消息，它们会自动等待重启完成后再继续执行
 - auth.json 默认位置：`~/.codex/auth.json` (所有平台)，可通过 `CODEX_HOME` 或 `CODEX_REMOTER_AUTH_FILE` 环境变量自定义
 
-返回的 `reply` 是页面中最后一条 assistant 消息的文本。`wait_for_reply=false` 时只负责输入并点击发送，接口会立即返回。
+返回的 `reply` 是页面中最后一条 assistant 消息的文本。`status` 通常为
+`completed`；如果生成被中途停止且没有任何回复文本，则为 `interrupted`。
+`wait_for_reply=false` 时只负责输入并点击发送，接口会立即返回。
 
 ## 重要限制
 

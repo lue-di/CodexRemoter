@@ -155,6 +155,7 @@ def create_app(
             "elapsed_ms": result.elapsed_ms,
             "target_id": result.target_id,
             "url": result.url,
+            "status": result.status,
         }
 
     @application.post("/v1/codex-app/auth", dependencies=[auth])

@@ -53,6 +53,7 @@ async def test_health_and_message_api(tmp_path: Path):
         response = await client.post("/v1/codex-app/messages", json={"message": "hello"})
         assert response.status_code == 200
         assert response.json()["reply"] == "fake reply"
+        assert response.json()["status"] == "completed"
         assert fake.messages[0][0] == "hello"
 
 
