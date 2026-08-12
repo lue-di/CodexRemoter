@@ -127,11 +127,11 @@ def create_app(
 
     @application.post("/v1/codex-app/stop", dependencies=[auth])
     async def stop() -> Dict[str, Any]:
-        return await controller.stop()
+        return await _call(controller.stop())
 
     @application.post("/v1/codex-app/restart", dependencies=[auth])
     async def restart(body: StartRequest = StartRequest()) -> Dict[str, Any]:
-        await controller.stop()
+        await _call(controller.stop())
         await _call(controller.start(cwd=_cwd(settings, body.cwd)))
         return controller.status()
 

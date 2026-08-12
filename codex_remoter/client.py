@@ -26,6 +26,10 @@ class CodexAppUnavailableError(CodexAppError):
     pass
 
 
+class CodexAppConnectionError(CodexAppUnavailableError):
+    """Raised when CDP rejected the connection before a command was sent."""
+
+
 class CodexAppTimeoutError(CodexAppError):
     pass
 
@@ -106,6 +110,7 @@ class CodexAppController:
     async def start(self, cwd: Optional[str] = None) -> Dict[str, Any]:
         async with self._lock:
             if self._targets():
+                await self._wait_for_ready_target()
                 self.last_error = None
                 if cwd:
                     await asyncio.to_thread(self._open_workspace, cwd)
@@ -161,28 +166,40 @@ class CodexAppController:
                         f"启动 Codex App 失败: {exc}\n应用路径: {app_path}"
                     ) from exc
 
-            deadline = time.monotonic() + self.startup_timeout
-            while time.monotonic() < deadline:
-                if self._targets():
-                    self._managed_pid = self._pid_for_debug_port(self.debug_port)
-                    if cwd:
-                        await asyncio.to_thread(self._open_workspace, cwd)
-                    self.last_error = None
-                    return self.status()
-                await asyncio.sleep(self.poll_interval)
-            raise CodexAppTimeoutError(
-                "Codex App 启动超时：未发现 DevTools 页面（端口 {}）".format(self.debug_port)
-            )
+            await self._wait_for_ready_target()
+            self._managed_pid = self._pid_for_debug_port(self.debug_port)
+            if cwd:
+                await asyncio.to_thread(self._open_workspace, cwd)
+            self.last_error = None
+            return self.status()
 
     async def stop(self) -> Dict[str, Any]:
         async with self._lock:
+            termination_requested = False
             if self._managed_pid and sys_platform() != "win32":
                 with contextlib_suppress(ProcessLookupError):
                     os.killpg(self._managed_pid, signal.SIGTERM)
+                    termination_requested = True
             elif self._launcher and self._launcher.poll() is None:
                 self._launcher.terminate()
+                termination_requested = True
+
+            # terminate() only requests shutdown. Wait for the old DevTools
+            # listener to disappear so an immediate start cannot mistake the
+            # exiting instance for the newly launched one.
+            if termination_requested:
+                deadline = time.monotonic() + self.startup_timeout
+                while self._targets():
+                    if time.monotonic() >= deadline:
+                        self.last_error = (
+                            "Codex App 停止超时：DevTools 端口 {} 仍在响应"
+                        ).format(self.debug_port)
+                        raise CodexAppTimeoutError(self.last_error)
+                    await asyncio.sleep(self.poll_interval)
+
             self._launcher = None
             self._managed_pid = None
+            self.last_error = None
             return self.status()
 
     async def send_message(
@@ -222,11 +239,21 @@ class CodexAppController:
         elif cwd:
             await asyncio.to_thread(self._open_workspace, cwd)
         async with self._lock:
-            target = self._choose_target()
             started = time.monotonic()
-            before = await asyncio.to_thread(
-                self._evaluate, target, self._prepare_script(message, new_chat)
-            )
+            ready_deadline = started + self.startup_timeout
+            while True:
+                target = await self._wait_for_ready_target(ready_deadline)
+                try:
+                    before = await asyncio.to_thread(
+                        self._evaluate, target, self._prepare_script(message, new_chat)
+                    )
+                    break
+                except CodexAppConnectionError as exc:
+                    if time.monotonic() >= ready_deadline:
+                        raise CodexAppTimeoutError(
+                            "Codex App 连接超时，消息未发送: {}".format(exc)
+                        ) from exc
+                    await asyncio.sleep(self.poll_interval)
             if not before.get("ok"):
                 raise CodexAppError(before.get("error", "无法写入 Codex 输入框"))
             if not wait_for_reply:
@@ -255,12 +282,44 @@ class CodexAppController:
             raise CodexAppTimeoutError("等待 Codex App 回复超过 {:.0f} 秒".format(timeout))
 
     def _choose_target(self) -> Dict[str, Any]:
-        targets = [t for t in self._targets() if t.get("type") == "page"]
-        if not targets:
+        target = self._choose_target_from(self._targets())
+        if target is None:
             raise CodexAppUnavailableError("未找到 Codex App 页面")
+        return target
+
+    @staticmethod
+    def _choose_target_from(targets: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        targets = [t for t in targets if t.get("type") == "page"]
+        if not targets:
+            return None
         return next(
             (t for t in targets if "avatar-overlay" not in t.get("url", "")),
             targets[0],
+        )
+
+    async def _wait_for_ready_target(
+        self, deadline: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """Wait until a page target also accepts a real CDP command."""
+        deadline = deadline or (time.monotonic() + self.startup_timeout)
+        last_error: Optional[Exception] = None
+        probe = "(() => ({ok: true}))()"
+
+        while time.monotonic() < deadline:
+            target = self._choose_target_from(self._targets())
+            if target is not None:
+                try:
+                    result = await asyncio.to_thread(self._evaluate, target, probe)
+                    if result.get("ok") is True:
+                        return target
+                except CodexAppUnavailableError as exc:
+                    last_error = exc
+            await asyncio.sleep(self.poll_interval)
+
+        details = f"：{last_error}" if last_error else ""
+        raise CodexAppTimeoutError(
+            "Codex App 启动超时：DevTools 页面尚未可连接"
+            "（端口 {}）{}".format(self.debug_port, details)
         )
 
     def _targets(self) -> List[Dict[str, Any]]:
@@ -632,19 +691,24 @@ class CodexAppController:
             raise CodexAppUnavailableError("Codex 页面没有 DevTools WebSocket 地址")
         try:
             ws = websocket.create_connection(url, timeout=4, suppress_origin=True)
+        except Exception as exc:
+            raise CodexAppConnectionError("CDP 建连失败: {}".format(exc)) from exc
+        try:
             ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {
                 "expression": expression, "returnByValue": True, "awaitPromise": True,
             }}))
             while True:
                 value = json.loads(ws.recv())
                 if value.get("id") == 1:
-                    ws.close()
                     result = value.get("result", {}).get("result", {})
                     if result.get("type") == "string":
                         return json.loads(result.get("value", "{}"))
                     return result.get("value") or {}
         except Exception as exc:
             raise CodexAppUnavailableError("CDP 调用失败: {}".format(exc)) from exc
+        finally:
+            with contextlib_suppress(Exception):
+                ws.close()
 
     @staticmethod
     def _prepare_script(message: str, new_chat: bool) -> str:

@@ -6,7 +6,11 @@ import httpx
 import pytest
 
 from codex_remoter.api import create_app
-from codex_remoter.client import AppTurnResult, CodexAppController
+from codex_remoter.client import (
+    AppTurnResult,
+    CodexAppController,
+    CodexAppTimeoutError,
+)
 from codex_remoter.config import Settings
 
 
@@ -73,3 +77,20 @@ async def test_api_key_and_cwd_validation(tmp_path: Path):
             json={"message": "hello", "cwd": str(tmp_path / "missing")},
         )
         assert invalid.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_stop_timeout_is_reported_as_gateway_timeout():
+    fake = FakeController()
+
+    async def timeout():
+        raise CodexAppTimeoutError("Codex App 停止超时")
+
+    fake.stop = timeout
+    app = create_app(Settings(autostart=False), controller=fake)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/v1/codex-app/stop")
+
+    assert response.status_code == 504
+    assert response.json()["detail"] == "Codex App 停止超时"
